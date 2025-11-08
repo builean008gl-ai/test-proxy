@@ -1,47 +1,45 @@
-// File: api/proxy.js
-// Make sure to create 'package.json' with: { "dependencies": { "node-fetch": "^3.3.2" } }
-
-import fetch from 'node-fetch';
+// api/proxy.js
+// KHÔNG CẦN package.json. Vercel tự hỗ trợ fetch.
 
 export default async function handler(req, res) {
-  // 1. Enable CORS for ALL requests
-  res.setHeader('Access-Control-Allow-Credentials', true);
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, ngrok-skip-browser-warning, Authorization');
+    // Cấu hình CORS để Web App gọi được
+    res.setHeader('Access-Control-Allow-Credentials', true);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-  // 2. Handle OPTIONS (Browser Preflight)
-  if (req.method === 'OPTIONS') return res.status(200).end();
+    // Xử lý preflight request
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
 
-  // 3. Handle GET (Heartbeat test for browser)
-  if (req.method === 'GET') {
-      return res.status(200).json({ 
-          status: 'alive', 
-          message: 'Veo Proxy is READY! Go back to the app and use this URL.' 
-      });
-  }
-
-  // 4. Handle POST (Real proxying)
-  if (req.method === 'POST') {
-      try {
-        const { cookie } = req.body || {};
-        if (!cookie) return res.status(400).json({ error: 'Missing cookie in body' });
-
-        const googleRes = await fetch('https://labs.google/api/auth/session', {
-          method: 'GET',
-          headers: {
-            'Cookie': cookie,
-            'User-Agent': 'Mozilla/5.0 (compatible; VeoFlowProxy/1.0)'
-          }
+    // Test nhanh trên trình duyệt xem proxy sống chưa
+    if (req.method === 'GET') {
+        return res.status(200).json({
+            status: '✅ Proxy Online',
+            message: 'Copy URL này dán vào Veo Flow Studio, thêm đuôi /api/proxy'
         });
+    }
 
-        const data = await googleRes.json();
-        res.status(googleRes.status).json(data);
-      } catch (error) {
-        res.status(500).json({ error: error.message, stack: error.stack });
-      }
-      return;
-  }
+    // Xử lý chính: Gọi sang Google Labs
+    if (req.method === 'POST') {
+        try {
+            const { cookie } = req.body;
+            // Dùng fetch mặc định của Node.js 18+
+            const response = await fetch('https://labs.google/api/auth/session', {
+                method: 'GET',
+                headers: {
+                    'Cookie': cookie,
+                    'User-Agent': 'Mozilla/5.0 (compatible; VeoProxy/2.0)'
+                }
+            });
 
-  res.status(405).json({ error: 'Method not allowed' });
+            const data = await response.json();
+            return res.status(response.status).json(data);
+        } catch (error) {
+            return res.status(500).json({ error: error.message, details: 'Proxy fetch failed' });
+        }
+    }
+
+    res.status(405).json({ error: 'Method Not Allowed' });
 }
