@@ -1,14 +1,15 @@
 // api/proxy.js
-// Ultimate Hybrid Version (Supports optional Residential Proxy & Advanced Headers)
+// STRICT Residential Mode: Forces traffic through your proxy if provided.
 
 export default async function handler(req, res) {
+    // Enable CORS for your Web App
     res.setHeader('Access-Control-Allow-Credentials', true);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     if (req.method === 'OPTIONS') return res.status(200).end();
 
-    if (req.method === 'GET') return res.status(200).json({ status: '✅ Online', mode: 'Hybrid' });
+    if (req.method === 'GET') return res.status(200).json({ status: '✅ Proxy Online' });
 
     if (req.method === 'POST') {
         try {
@@ -17,7 +18,7 @@ export default async function handler(req, res) {
 
             const targetURL = "https://labs.google/fx/vi/tools/flow";
             
-            // FULL CHROME HEADERS mimicking a real navigation request
+            // HEADERS identical to a real Chrome browser
             const headers = {
                 "Host": "labs.google",
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -37,55 +38,75 @@ export default async function handler(req, res) {
                 "Connection": "keep-alive"
             };
 
-            let response;
-            // Dynamic require for optional dependencies
+            // Load dependencies securely
             let fetch, HttpsProxyAgent;
-            try { fetch = require('node-fetch'); } catch (e) { /* ignore, might use global fetch if node 18 */ }
+            try { fetch = require('node-fetch'); } catch (e) { /* ignore */ }
             try { HttpsProxyAgent = require('https-proxy-agent').HttpsProxyAgent; } catch (e) { /* ignore */ }
 
-            // Use global fetch if node-fetch not found (basic mode fallback)
             const doFetch = fetch || global.fetch;
+            let agent = undefined;
 
-            if (residentialProxy && HttpsProxyAgent) {
-                // --- ADVANCED MODE ---
+            // STRICT RESIDENTIAL PROXY SETUP
+            if (residentialProxy) {
+                if (!HttpsProxyAgent) {
+                    return res.status(500).json({ error: 'Missing dependency', details: 'Please add "https-proxy-agent" to package.json on Vercel.' });
+                }
                 try {
-                    let proxyUrl = residentialProxy;
-                    if (!residentialProxy.startsWith('http')) {
-                         const parts = residentialProxy.trim().split(':');
-                         if (parts.length === 4) proxyUrl = `http://${parts[2]}:${parts[3]}@${parts[0]}:${parts[1]}`;
+                    // Handle various formats: IP:Port:User:Pass OR http://User:Pass@IP:Port
+                    let proxyUrl = residentialProxy.trim();
+                    if (!proxyUrl.startsWith('http')) {
+                         const parts = proxyUrl.split(':');
+                         if (parts.length === 4) {
+                             // Format: IP:PORT:USER:PASS -> http://USER:PASS@IP:PORT
+                             proxyUrl = `http://${parts[2]}:${parts[3]}@${parts[0]}:${parts[1]}`;
+                         } else if (parts.length === 2) {
+                             // Format: IP:PORT -> http://IP:PORT
+                             proxyUrl = `http://${parts[0]}:${parts[1]}`;
+                         }
                     }
-                    const agent = new HttpsProxyAgent(proxyUrl);
-                    console.log("Using Residential Proxy...");
-                    response = await doFetch(targetURL, { method: 'GET', headers, agent, redirect: 'follow', timeout: 25000 });
+                    console.log("Connecting via Residential Proxy...");
+                    agent = new HttpsProxyAgent(proxyUrl);
                 } catch (e) {
-                    return res.status(500).json({ error: 'Residential Proxy Failed', details: e.message });
+                    return res.status(400).json({ error: 'Invalid Proxy Format', details: e.message });
                 }
             } else {
-                // --- BASIC VERCEL MODE ---
-                console.log("Using Vercel Direct IP...");
-                response = await doFetch(targetURL, { method: 'GET', headers, redirect: 'follow' });
+                 console.log("⚠️ Warning: Using Vercel IP (High chance of 401 Block)");
             }
+
+            // EXECUTE REQUEST
+            // If agent is set, node-fetch WILL use it. If it fails, it throws an error (good).
+            const response = await doFetch(targetURL, { 
+                method: 'GET', 
+                headers, 
+                agent, // Important: undefined if no proxy, properly set if proxy exists
+                redirect: 'follow',
+                timeout: 30000 // 30s timeout for slow residential proxies
+            });
 
             const text = await response.text();
             const lowerText = text.toLowerCase();
             
-            // Robust check for login page indicators
+            // Check for login redirects (Google's way of saying "Token Invalid" or "Blocked")
             const isLoginPage = lowerText.includes('signin/v2/identifier') || 
                                 lowerText.includes('accounts.google.com') ||
                                 (lowerText.includes('sign in') && lowerText.includes('google'));
 
             if (response.status === 403 || response.status === 401 || isLoginPage) {
-                 console.log("Blocked or Redirected to Login");
+                 console.log("❌ Blocked by Google (401/Login Redirect)");
                  return res.status(401).json({ 
-                     error: 'Session refused by Google (IP mismatch or expired). Try a Residential Proxy matching your cookie location.' 
+                     error: 'Session refused. Your Residential Proxy might be detected or the cookie is expired.',
+                     details: isLoginPage ? 'Redirected to Login Page' : `Status ${response.status}`
                  });
             }
 
-            return res.status(200).json({ success: true, message: "Authenticated successfully" });
+            return res.status(200).json({ success: true, message: "Authenticated successfully via Proxy" });
 
         } catch (error) {
-            console.error("Proxy error:", error);
-            return res.status(500).json({ error: error.message });
+            console.error("🔥 Proxy Connection Failed:", error.message);
+            return res.status(502).json({ 
+                error: 'Proxy Connection Failed', 
+                details: error.message.includes('timeout') ? 'Residential Proxy timed out (too slow)' : error.message 
+            });
         }
     }
     res.status(405).json({ error: 'Method Not Allowed' });
